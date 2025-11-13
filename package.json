@@ -1,0 +1,17 @@
+{
+  "name": "cli-appender",
+  "version": "1.0.0",
+  "description": "CLI tool to append content to a file",
+  "main": "index.js",
+  "bin": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "compile": "node build.js"
+  },
+  "dependencies": {
+    "commander": "^11.1.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.4"
+  }
+}
