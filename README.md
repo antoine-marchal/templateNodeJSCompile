@@ -30,13 +30,13 @@ node index.js -f filename.txt
 
 ## Building
 
-To compile into a single executable:
+To compile into a single executable CMD file with embedded JavaScript:
 
 ```bash
 npm run compile
 ```
 
-This creates `dist/cli-appender-1.0.0.js` and `dist/cli-appender-1.0.0.cmd`.
+This creates `dist/cli-appender-1.0.0.cmd` containing the compiled Node.js code.
 
 ## License
 
