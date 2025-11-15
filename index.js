@@ -1,45 +1,36 @@
 #!/usr/bin/env node
 
-const { Command } = require('commander');
-const fs = require('fs');
-const readline = require('readline');
+const { chromium } = require('playwright-core');
 
-const program = new Command();
+async function main() {
+  const city = process.argv[2] || "Biganos";
 
-program
-  .name('appender')
-  .description('CLI tool to append content to a file')
-  .version('1.0.0')
-  .requiredOption('-f, --file <file>', 'file to append to')
-  .option('-c, --content <content>', 'content to append');
-
-program.parse();
-
-const options = program.opts();
-
-let content = options.content;
-
-if (!content) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
+  const browser = await chromium.launch({
+    channel: "msedge",
+    headless: true
   });
 
-  rl.question('Enter content to append: ', (answer) => {
-    content = answer;
-    rl.close();
-    appendToFile(options.file, content);
-  });
-} else {
-  appendToFile(options.file, content);
+  const page = await browser.newPage();
+
+  // wttr.in JSON output: no captcha, clean, fast
+  const url = `https://wttr.in/${encodeURIComponent(city)}?format=j1`;
+  await page.goto(url);
+
+  // Read raw JSON directly from the page
+  const raw = await page.evaluate(() => document.body.textContent);
+
+  const data = JSON.parse(raw);
+
+  const current = data.current_condition?.[0];
+  const temp = current?.temp_C;
+  const condition = current?.weatherDesc?.[0]?.value;
+
+  console.log(`Weather in ${city}: ${temp}°C, ${condition}`);
+
+  await browser.close();
 }
 
-function appendToFile(file, content) {
-  fs.appendFile(file, content + '\n', (err) => {
-    if (err) {
-      console.error('Error appending to file:', err);
-    } else {
-      console.log(`Content appended to ${file}`);
-    }
-  });
-}
+main().catch(err => {
+  console.error("Error:", err);
+  process.exit(1);
+});

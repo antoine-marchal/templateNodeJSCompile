@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
+const zlib = require("zlib");
 
 const pkg = require("./package.json");
 
@@ -19,53 +20,58 @@ const outputCmd = `${name}-${version}.cmd`;
 console.log(`Building ${outputCmd}...`);
 execSync(`npx ncc build ${entry} -o ${distDir} -m`, { stdio: "inherit" });
 
-// Read the compiled JS content
+// Read the compiled JS content as raw bytes
 const compiledJsPath = path.join(distDir, "index.js");
 const compiledJsContent = fs.readFileSync(compiledJsPath);
 
-// Base64 encode using Node (no PowerShell needed)
-const base64Content = compiledJsContent.toString("base64");
+// Compress the JS using gzip
+const compressed = zlib.gzipSync(compiledJsContent);
 
-// Chunk the Base64 to avoid CMD line length limits (~8k chars)
-// We'll be conservative and use 7000 chars per line.
-const chunkSize = 7000;
-const chunks = [];
-for (let i = 0; i < base64Content.length; i += chunkSize) {
-  chunks.push(base64Content.slice(i, i + chunkSize));
-}
+// We’ll emit the *compressed* bytes as hex
+const byteArray = Array.from(compressed);
 
 // --- Build the CMD file ---
-// NOTE: use \r\n line endings so CMD is happy on Windows.
+// Self-extracting CMD:
+//  - reads hex-compressed data after :__BIN__ from %~f0
+//  - converts to bytes
+//  - decompresses with GzipStream
+//  - writes %temp%\embedded_index.js
+//  - runs node on it
+
 let cmdContent = [
   "@echo off",
-  "setlocal EnableDelayedExpansion",
+  "setlocal",
   "",
   'set "JS=%temp%\\embedded_index.js"',
-  'set "B64=%temp%\\embedded_index.b64"',
   "",
   'del "%JS%" 2>nul',
-  'del "%B64%" 2>nul',
-  ""
-].join("\r\n");
-
-// Append commands that reconstruct the .b64 file
-chunks.forEach(chunk => {
-  // No characters in Base64 need escaping for ECHO
-  cmdContent += `>>"%B64%" echo ${chunk}\r\n`;
-});
-
-cmdContent += [
   "",
-  "rem Decode Base64 -> JS",
-  "powershell -NoLogo -NoProfile -Command ^",
-  '  "$b=[IO.File]::ReadAllText(\'%B64%\'); $o=[Convert]::FromBase64String($b); [IO.File]::WriteAllBytes(\'%JS%\', $o)"',
-  "",
-  'del "%B64%" 2>nul',
+  'powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$out = \'%JS%\'; $bytes = New-Object System.Collections.Generic.List[byte]; $reading = $false; Get-Content -LiteralPath \'%~f0\' | ForEach-Object { if ($_ -eq \':__BIN__\') { $reading = $true; return } if (-not $reading) { return } if ($_ -eq \':__END__\') { $reading = $false; return } $line = $_.Trim(); if ($line.Length -eq 0) { return } for ($i = 0; $i -lt $line.Length; $i += 2) { $hex = $line.Substring($i, 2); [void]$bytes.Add([Convert]::ToByte($hex, 16)) } }; $data = $bytes.ToArray(); $msIn = New-Object System.IO.MemoryStream(,$data); $gzip = New-Object System.IO.Compression.GzipStream($msIn, [System.IO.Compression.CompressionMode]::Decompress); $fsOut = [System.IO.File]::Create($out); $gzip.CopyTo($fsOut); $gzip.Dispose(); $fsOut.Dispose();"',
+  "if errorlevel 1 (",
+  "  echo Failed to reconstruct JS.",
+  "  exit /b 1",
+  ")",
   "",
   'node "%JS%" %*',
   "exit /b",
-  ""
+  "",
+  ":__BIN__"
 ].join("\r\n");
+
+// Append the hex-compressed data after :__BIN__
+// Each line is a continuous hex string (no separators).
+const bytesPerLine = 2000; // 2000 bytes -> 4000 hex chars per line
+
+for (let i = 0; i < byteArray.length; i += bytesPerLine) {
+  const slice = byteArray.slice(i, i + bytesPerLine);
+  const line = slice
+    .map(b => b.toString(16).padStart(2, "0")) // 2-digit hex
+    .join(""); // "1f8b0800..."
+  cmdContent += "\r\n" + line;
+}
+
+// End marker
+cmdContent += "\r\n:__END__\r\n";
 
 // Write the final single-file CMD
 fs.writeFileSync(path.join(distDir, outputCmd), cmdContent, "utf8");

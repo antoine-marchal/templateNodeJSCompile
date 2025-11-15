@@ -8,9 +8,6 @@
     "start": "node index.js",
     "compile": "node build.js"
   },
-  "dependencies": {
-    "commander": "^11.1.0"
-  },
   "devDependencies": {
     "@vercel/ncc": "^0.38.4"
   }
